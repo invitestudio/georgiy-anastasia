@@ -631,7 +631,7 @@
     <img class="photo cover-photo-img rv"
          src="photos/photo-main.jpg"
          alt="Георгий и Анастасия"
-         width="1451" height="1084">
+         width="2902" height="2168">
   </div>
 </section>
 
@@ -1152,23 +1152,31 @@
   });
 
   /* ── фоновая музыка ──
-     Автозапуск со звуком браузеры блокируют, поэтому включаем
-     только по нажатию. Зацикливание — атрибутом loop у <audio>. */
+     Автозапуск со звуком браузеры блокируют. Поэтому: пробуем включить
+     сразу, а если не дали — включаем при первом же действии гостя
+     (касание, клик, прокрутка). Для него это выглядит как автозапуск.
+
+     Важно: слушатели снимаем ТОЛЬКО когда звук реально пошёл (событие
+     playing). Раньше снимали по «успеху» play() — но браузер умеет
+     ответить «ок» и тут же сам поставить на паузу; слушателей уже нет,
+     и музыка не включалась вообще. */
   (function () {
     var bgm = document.getElementById('bgm');
     var btn = document.getElementById('musicBtn');
     if (!bgm || !btn) return;
 
-    var MAX_VOL = 0.45;   // фон, а не концерт
+    var MAX_VOL = 0.45;        // фон, а не концерт
     var fadeTimer = null;
+    var stoppedByUser = false; // гость выключил сам — не навязываемся
+    var armed = false;
 
     function fadeTo(target, done) {
       clearInterval(fadeTimer);
-      var step = (target - bgm.volume) / 20;
+      var step = (target - bgm.volume) / 16;
       fadeTimer = setInterval(function () {
         var v = bgm.volume + step;
-        if ((step > 0 && v >= target) || (step < 0 && v <= target)) {
-          bgm.volume = target;
+        if ((step >= 0 && v >= target) || (step < 0 && v <= target)) {
+          bgm.volume = Math.min(1, Math.max(0, target));
           clearInterval(fadeTimer);
           if (done) done();
         } else {
@@ -1177,44 +1185,55 @@
       }, 40);
     }
 
-    // Гость сам выключил музыку — больше не навязываемся
-    var stoppedByUser = false;
+    var GESTURES = ['pointerdown', 'touchstart', 'touchend', 'mousedown',
+                    'click', 'keydown', 'wheel', 'scroll'];
 
-    /* Браузеры не дают включить звук без действия человека.
-       Поэтому: пробуем стартовать сразу (иногда разрешают),
-       а если нет — ждём первого касания/клика. Для гостя это
-       выглядит как автозапуск: чтобы читать, он всё равно листает. */
-    var GESTURES = ['pointerdown', 'touchstart', 'keydown'];
-
-    function autoStart() {
-      if (stoppedByUser || !bgm.paused) return;
-      bgm.volume = 0;
-      var p = bgm.play();
-      if (p && p.then) {
-        p.then(function () { fadeTo(MAX_VOL); disarm(); })
-         .catch(function () { /* заблокировано — ждём касания */ });
-      } else {
-        fadeTo(MAX_VOL);
-      }
-    }
-
-    function onGesture() { autoStart(); }
-
-    function disarm() {
-      GESTURES.forEach(function (ev) {
-        document.removeEventListener(ev, onGesture, true);
-      });
-    }
+    function onGesture() { tryPlay(); }
 
     function arm() {
+      if (armed) return;
+      armed = true;
       GESTURES.forEach(function (ev) {
         document.addEventListener(ev, onGesture, { capture: true, passive: true });
+        window.addEventListener(ev, onGesture, { capture: true, passive: true });
       });
     }
 
+    function disarm() {
+      if (!armed) return;
+      armed = false;
+      GESTURES.forEach(function (ev) {
+        document.removeEventListener(ev, onGesture, true);
+        window.removeEventListener(ev, onGesture, true);
+      });
+    }
+
+    function tryPlay() {
+      if (stoppedByUser || !bgm.paused) return;
+      // громкость ставим сразу: если событие playing почему-то не придёт,
+      // музыка всё равно будет слышна, а не проиграет вхолостую на нуле
+      bgm.volume = MAX_VOL;
+      var p = bgm.play();
+      if (p && p.catch) p.catch(function () { /* не дали — ждём действия гостя */ });
+    }
+
+    // звук действительно пошёл — только теперь перестаём ждать касаний
+    bgm.addEventListener('playing', function () {
+      if (!stoppedByUser) disarm();
+      btn.classList.remove('hint');
+    });
+
+    // браузер сам остановил — снова ждём действия гостя
+    bgm.addEventListener('pause', function () {
+      if (!stoppedByUser) arm();
+    });
+
     arm();
-    autoStart();                                  // попытка без ожидания
-    window.addEventListener('load', autoStart);   // и после полной загрузки
+    tryPlay();
+    window.addEventListener('load', tryPlay);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) tryPlay();
+    });
 
     btn.addEventListener('click', function () {
       btn.classList.remove('hint');
@@ -1222,9 +1241,7 @@
         stoppedByUser = false;
         bgm.volume = 0;
         var p = bgm.play();
-        if (p && p.catch) {
-          p.catch(function () { btn.title = 'Не удалось включить музыку'; });
-        }
+        if (p && p.catch) p.catch(function () { btn.title = 'Не удалось включить музыку'; });
         fadeTo(MAX_VOL);
       } else {
         stoppedByUser = true;
@@ -1247,7 +1264,6 @@
       btn.title = 'Включить музыку';
     });
 
-    // подсказку убираем, даже если гость её не заметил
     setTimeout(function () { btn.classList.remove('hint'); }, 8000);
   })();
 
