@@ -610,7 +610,7 @@
 </head>
 <body>
 <!-- фоновая музыка: зациклена, включается кнопкой -->
-<audio id="bgm" loop preload="none">
+<audio id="bgm" loop preload="auto">
   <source src="audio/music.m4a" type="audio/mp4">
 </audio>
 <button class="music-btn hint" id="musicBtn" type="button" aria-pressed="false" aria-label="Включить музыку" title="Включить музыку">
@@ -1177,18 +1177,58 @@
       }, 40);
     }
 
+    // Гость сам выключил музыку — больше не навязываемся
+    var stoppedByUser = false;
+
+    /* Браузеры не дают включить звук без действия человека.
+       Поэтому: пробуем стартовать сразу (иногда разрешают),
+       а если нет — ждём первого касания/клика. Для гостя это
+       выглядит как автозапуск: чтобы читать, он всё равно листает. */
+    var GESTURES = ['pointerdown', 'touchstart', 'keydown'];
+
+    function autoStart() {
+      if (stoppedByUser || !bgm.paused) return;
+      bgm.volume = 0;
+      var p = bgm.play();
+      if (p && p.then) {
+        p.then(function () { fadeTo(MAX_VOL); disarm(); })
+         .catch(function () { /* заблокировано — ждём касания */ });
+      } else {
+        fadeTo(MAX_VOL);
+      }
+    }
+
+    function onGesture() { autoStart(); }
+
+    function disarm() {
+      GESTURES.forEach(function (ev) {
+        document.removeEventListener(ev, onGesture, true);
+      });
+    }
+
+    function arm() {
+      GESTURES.forEach(function (ev) {
+        document.addEventListener(ev, onGesture, { capture: true, passive: true });
+      });
+    }
+
+    arm();
+    autoStart();                                  // попытка без ожидания
+    window.addEventListener('load', autoStart);   // и после полной загрузки
+
     btn.addEventListener('click', function () {
       btn.classList.remove('hint');
       if (bgm.paused) {
+        stoppedByUser = false;
         bgm.volume = 0;
         var p = bgm.play();
         if (p && p.catch) {
-          p.catch(function () {
-            btn.title = 'Не удалось включить музыку';
-          });
+          p.catch(function () { btn.title = 'Не удалось включить музыку'; });
         }
         fadeTo(MAX_VOL);
       } else {
+        stoppedByUser = true;
+        disarm();
         fadeTo(0, function () { bgm.pause(); });
       }
     });
